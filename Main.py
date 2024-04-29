@@ -154,13 +154,15 @@ while cap.isOpened():
         cvzone.putTextRect(img,f"Blink for {MIN_FRAME_FOR_BLINK_ALARM} frames under {calibrated_eye}",(350,50),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
         cvzone.putTextRect(img,f"Yawn for {MIN_FRAME_FOR_YAWN_ALARM} frames over {MOUTH_CUTOFF}",(350,75),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
 
-        if(((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1):
+        if(((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1):     #one time frame complete
           seconds += 1
-          if(blinkCounter >= BLINK_THRESHOLD):
+          if(blinkCounter >= BLINK_THRESHOLD or yawnCounter >= YAWN_THRESHOLD):
             buzzer.on()
             time.sleep(2)
             buzzer.off()
           totalBlinkCounter += blinkCounter
+          totalYawnCounter += yawnCounter
+          yawnCounter = 0
           blinkCounter = 0
 
     cv.imshow("Result",img)
