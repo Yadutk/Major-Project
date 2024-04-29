@@ -23,7 +23,7 @@ LOWERLIP = [87,14,317,85,16,315,306]
 cap = cv.VideoCapture(0)
 detector = FaceMeshDetector(maxFaces=1)
 [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
-[yawnCounter,blinkCounter,totalYawnCounter,totalBlinkCounter,flagEye,flagMouth,eyeCounter,mouthCounter,calibrated_eye,frame,time] = [0,0,0,0,False,False,0,0,EYE_CUTOFF,0,0]
+[yawnCounter,blinkCounter,totalYawnCounter,totalBlinkCounter,flagEye,flagMouth,eyeCounter,mouthCounter,calibrated_eye,frame,seconds] = [0,0,0,0,False,False,0,0,EYE_CUTOFF,0,0]
 [ratioList,yawnList] = [[],[]]
 buzzer = Buzzer(17)
 
@@ -154,8 +154,8 @@ while cap.isOpened():
         cvzone.putTextRect(img,f"Blink for {MIN_FRAME_FOR_BLINK_ALARM} frames under {calibrated_eye}",(350,50),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
         cvzone.putTextRect(img,f"Yawn for {MIN_FRAME_FOR_YAWN_ALARM} frames over {MOUTH_CUTOFF}",(350,75),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
 
-        if((time.time()//TIME_FRAME - time) == 1):
-          time += 1
+        if(((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1):
+          seconds += 1
           if(blinkCounter >= BLINK_THRESHOLD):
             buzzer.on()
             time.sleep(2)
