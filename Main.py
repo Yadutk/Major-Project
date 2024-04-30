@@ -1,11 +1,13 @@
 import cv2 as cv
 import cvzone
 from cvzone.FaceMeshModule import FaceMeshDetector
+import mediapipe as mp
+import numpy as np
 # from gpiozero import Buzzer
 import time
 
-EACH_FRAME_DETECTION = True                 #Keep it True for first method and False for averaging the EARs method
-NEED_CALIBRATION = False
+EACH_FRAME_DETECTION = False                 #Keep it True for first method and False for averaging the EARs method
+NEED_CALIBRATION = True
 EYE_CUTOFF = 26
 MOUTH_CUTOFF = 50
 AVG_LIST_LENGTH = 15
@@ -14,18 +16,56 @@ MIN_FRAME_FOR_BLINK_ALARM = 12
 MIN_FRAME_FOR_YAWN_ALARM = 30
 BLINK_THRESHOLD = 5
 YAWN_THRESHOLD = 3
-TIME_FRAME = 30
+TIME_FRAME = 60
+HEAD_POS_ANGLE = 15
 LEFTEYE = [33,159,158,155,153,145]
 RIGHTEYE = [463,385,386,263,374,380]
 UPPERLIP = [72,11,302,82,13,312,61]
 LOWERLIP = [87,14,317,85,16,315,306]
 
-cap = cv.VideoCapture(0)
+cap = cv.VideoCapture(1)
 detector = FaceMeshDetector(maxFaces=1)
 [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
-[yawnCounter,blinkCounter,totalYawnCounter,totalBlinkCounter,flagEye,flagMouth,eyeCounter,mouthCounter,calibrated_eye,frame,seconds,start_time,stop_time] = [0,0,0,0,False,False,0,0,EYE_CUTOFF,0,0,0,0]
-[ratioList,yawnList] = [[],[]]
+[yawnCounter,blinkCounter,totalYawnCounter,totalBlinkCounter,ratioList,yawnList,flagEye,flagMouth,eyeCounter,mouthCounter,calibrated_eye,frame,seconds,start_time,stop_time] = [0,0,0,0,[],[],False,False,0,0,EYE_CUTOFF,0,0,0,0]
 # buzzer = Buzzer(17)
+
+mp_drawing = mp.solutions.drawing_utils
+mp_facemesh = mp.solutions.face_mesh.FaceMesh(min_detection_confidence = 0.5,min_tracking_confidence=0.5)
+
+def processOutput(results,im_h,im_w,angle):
+    [face_3d,face_2d] = [[],[]]
+    if(results.multi_face_landmarks):
+        for face_landmarks in results.multi_face_landmarks:
+            for idx,lm in enumerate(face_landmarks.landmark):
+                if(idx in [33,263,1,61,291,199]):
+                    # if(idx==1):
+                    #     nose_2d = (lm.x*im_w,lm.y*im_h)
+                    #     nose_3d = (lm.x*im_w,lm.y*im_h,lm.z*3000)
+                    x,y = int(lm.x*im_w),int(lm.y*im_h)
+                    face_2d.append([x,y])
+                    face_3d.append([x,y,lm.z])
+        face_2d = np.array(face_2d).astype("float32")
+        face_3d = np.array(face_3d).astype("float32")
+        focal_length = 1 * im_w
+    
+        cam_mat = np.array([[focal_length,0,im_h/2],[0,focal_length,im_w/2],[0,0,1]])
+        dist_mat = np.zeros((4,1),dtype = np.float32)
+    
+        _,rot_v,_ = cv.solvePnP(face_3d,face_2d,cam_mat,dist_mat)
+        rmat,_ = cv.Rodrigues(rot_v)
+    
+        angles,_,_,_,_,_ = cv.RQDecomp3x3(rmat)
+        x = angles[0]*360
+        y = angles[1]*360
+        # z = angles[2]*360
+    
+        if(y<-angle): text = "Looking right"
+        elif(y>angle) : text = "Looking left"
+        elif(x<-angle) : text = "Looking down"
+        elif(x>angle) : text = "Looking up"
+        else : text = "Forward"
+    else: text = "No Face Detected"
+    return True if text=="Forward" else False
 
 def calcEAR(l):
     a = detector.findDistance(l[1],l[5])
@@ -83,87 +123,93 @@ start_time = time.time()
 while cap.isOpened():
     frame += 1
     suc,img = cap.read()
-    img,faces = detector.findFaceMesh(img,draw=False)
-    if faces:
-        face = faces[0]
-        for i in range(7):
-            LOWERLIPCoord[i] = face[LOWERLIP[i]]
-            UPPERLIPCoord[i] = face[UPPERLIP[i]]
-            if i != 6:
-                LEFTEYECoord[i] = face[LEFTEYE[i]]
-                RIGHTEYECoord[i] = face[RIGHTEYE[i]]
+    results = mp_facemesh.process(img)
+    im_h,im_w,_ = img.shape
+    forward = processOutput(results,im_h,im_w,HEAD_POS_ANGLE)
+    
+    if(forward):
+        img,faces = detector.findFaceMesh(img,draw=False)
+        if faces:
+            face = faces[0]
+            for i in range(7):
+                LOWERLIPCoord[i] = face[LOWERLIP[i]]
+                UPPERLIPCoord[i] = face[UPPERLIP[i]]
+                if i != 6:
+                    LEFTEYECoord[i] = face[LEFTEYE[i]]
+                    RIGHTEYECoord[i] = face[RIGHTEYE[i]]
 
-        mouth = int(calcYawn(UPPERLIPCoord,LOWERLIPCoord))
-        leftEAR = calcEAR(LEFTEYECoord)
-        rightEAR = calcEAR(RIGHTEYECoord)
-        ear = (leftEAR+rightEAR)//2
-
-        eyeClosed = ear<=calibrated_eye
-        mouthOpen = mouth>=MOUTH_CUTOFF
-
-        if EACH_FRAME_DETECTION:
-            if eyeClosed and not flagEye:
-                eyeCounter += 1
-                blinkCounter += 1                                       #increment here for actual blink count
-                flagEye = True
-            elif (ear>= calibrated_eye+3 and flagEye) or (eyeCounter>30):
-                eyeCounter = 0
-                flagEye = False
-            elif eyeClosed and flagEye:
-                eyeCounter += 1
-                # if eyeCounter==MIN_FRAME_FOR_BLINK_ALARM:
-                #     blinkCounter += 1                                   #increment here for blinks longer than certain time
-
-            if mouthOpen and not flagMouth:
-                flagMouth = True
-                mouthCounter += 1
-            elif mouthOpen and flagMouth:
-                mouthCounter += 1
-                if mouthCounter == MIN_FRAME_FOR_YAWN_ALARM:
-                    yawnCounter += 1
-            elif not mouthOpen and flagMouth:
-                mouthCounter = 0
-                flagMouth = False
-        else:
-            ratioList.append(ear)
-            yawnList.append(mouth)
-            if len(ratioList) > AVG_LIST_LENGTH:
-                ratioList.pop(0)
-                if len(yawnList) > AVG_LIST_LENGTH*3 : yawnList.pop(0)
-            ear = sum(ratioList)/len(ratioList)
-            mouth = sum(yawnList)/len(yawnList)
+            mouth = int(calcYawn(UPPERLIPCoord,LOWERLIPCoord))
+            leftEAR = calcEAR(LEFTEYECoord)
+            rightEAR = calcEAR(RIGHTEYECoord)
+            ear = (leftEAR+rightEAR)//2
 
             eyeClosed = ear<=calibrated_eye
             mouthOpen = mouth>=MOUTH_CUTOFF
 
-            if eyeClosed and not flagEye:
-                blinkCounter += 1
-                flagEye = True
-            elif ear >= calibrated_eye+3 and flagEye:
-                flagEye = False
+            if EACH_FRAME_DETECTION:
+                if eyeClosed and not flagEye:
+                    eyeCounter += 1
+                    blinkCounter += 1                                       #increment here for actual blink count
+                    flagEye = True
+                elif (ear>= calibrated_eye+3 and flagEye) or (eyeCounter>30):
+                    eyeCounter = 0
+                    flagEye = False
+                elif eyeClosed and flagEye:
+                    eyeCounter += 1
+                    # if eyeCounter==MIN_FRAME_FOR_BLINK_ALARM:
+                    #     blinkCounter += 1                                   #increment here for blinks longer than certain time
 
-            if mouthOpen and not flagMouth:
-                yawnCounter += 1
-                flagMouth = True
-            elif not mouthOpen and flagMouth:
-                flagMouth = False
+                if mouthOpen and not flagMouth:
+                    flagMouth = True
+                    mouthCounter += 1
+                elif mouthOpen and flagMouth:
+                    mouthCounter += 1
+                    if mouthCounter == MIN_FRAME_FOR_YAWN_ALARM:
+                        yawnCounter += 1
+                elif not mouthOpen and flagMouth:
+                    mouthCounter = 0
+                    flagMouth = False
+            else:
+                ratioList.append(ear)
+                yawnList.append(mouth)
+                if len(ratioList) > AVG_LIST_LENGTH:
+                    ratioList.pop(0)
+                    if len(yawnList) > AVG_LIST_LENGTH*3 : yawnList.pop(0)
+                ear = sum(ratioList)/len(ratioList)
+                mouth = sum(yawnList)/len(yawnList)
 
-        cvzone.putTextRect(img,f"Blinks : {blinkCounter}",(50,50),2,colorT=(0,0,0),colorR=(255,255,255))
-        cvzone.putTextRect(img,f"Yawn : {yawnCounter}",(50,100),2,colorT=(0,0,0),colorR=(255,255,255))
-        cvzone.putTextRect(img,f"Time : {round((time.time()-start_time),2)}",(50,150),2,colorT=(0,0,0),colorR=(255,255,255))
-        cvzone.putTextRect(img,f"Blink for {MIN_FRAME_FOR_BLINK_ALARM} frames under {calibrated_eye}",(350,50),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
-        cvzone.putTextRect(img,f"Yawn for {MIN_FRAME_FOR_YAWN_ALARM} frames over {MOUTH_CUTOFF}",(350,75),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
+                eyeClosed = ear<=calibrated_eye
+                mouthOpen = mouth>=MOUTH_CUTOFF
 
-        if(((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1):     #one time frame complete
-          seconds += 1
-        #   if(blinkCounter >= BLINK_THRESHOLD or yawnCounter >= YAWN_THRESHOLD):
-        #     buzzer.on()
-        #     time.sleep(2)
-        #     buzzer.off()
-          totalBlinkCounter += blinkCounter
-          totalYawnCounter += yawnCounter
-          yawnCounter = 0
-          blinkCounter = 0
+                if eyeClosed and not flagEye:
+                    blinkCounter += 1
+                    flagEye = True
+                elif ear >= calibrated_eye+3 and flagEye:
+                    flagEye = False
+
+                if mouthOpen and not flagMouth:
+                    yawnCounter += 1
+                    flagMouth = True
+                elif not mouthOpen and flagMouth:
+                    flagMouth = False
+
+            cvzone.putTextRect(img,f"Blinks : {blinkCounter}",(50,50),2,colorT=(0,0,0),colorR=(255,255,255))
+            cvzone.putTextRect(img,f"Yawn : {yawnCounter}",(50,100),2,colorT=(0,0,0),colorR=(255,255,255))
+            cvzone.putTextRect(img,f"Time : {round((time.time()-start_time),2)}",(50,150),2,colorT=(0,0,0),colorR=(255,255,255))
+            cvzone.putTextRect(img,f"Blink for {MIN_FRAME_FOR_BLINK_ALARM} frames under {calibrated_eye}",(350,50),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
+            cvzone.putTextRect(img,f"Yawn for {MIN_FRAME_FOR_YAWN_ALARM} frames over {MOUTH_CUTOFF}",(350,75),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
+
+            if((((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1) and not flagEye and not flagMouth):     #one time frame complete
+                seconds += 1
+                # if(blinkCounter >= BLINK_THRESHOLD or yawnCounter >= YAWN_THRESHOLD):
+                # buzzer.on()
+                # time.sleep(2)
+                # buzzer.off()
+                print(f"Blinked {blinkCounter} times and yawned {yawnCounter} times in batch {seconds}")
+                totalBlinkCounter += blinkCounter
+                totalYawnCounter += yawnCounter
+                yawnCounter = 0
+                blinkCounter = 0
 
     cv.imshow("Result",img)
     [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
@@ -173,4 +219,4 @@ cv.destroyAllWindows()
 cap.release()
 stop_time = time.time()
 
-print(f"You blinked {totalBlinkCounter} times and yawned {totalYawnCounter} times in {round(stop_time-start_time,2)} seconds")
+print(f"Completed run for {round((stop_time-start_time),2)}")
