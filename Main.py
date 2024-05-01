@@ -3,7 +3,7 @@ import cvzone
 from cvzone.FaceMeshModule import FaceMeshDetector
 import mediapipe as mp
 import numpy as np
-# from gpiozero import Buzzer
+from gpiozero import Buzzer
 import time
 
 EACH_FRAME_DETECTION = False                 #Keep it True for first method and False for averaging the EARs method
@@ -12,35 +12,34 @@ EYE_CUTOFF = 26
 MOUTH_CUTOFF = 50
 AVG_LIST_LENGTH = 15
 WINDOW_WIDTH,WINDOW_HEIGHT = 2560,1440
-MIN_FRAME_FOR_BLINK_ALARM = 12
+MIN_FRAME_FOR_BLINK_ALARM = 13
 MIN_FRAME_FOR_YAWN_ALARM = 30
-BLINK_THRESHOLD = 5
-YAWN_THRESHOLD = 3
-TIME_FRAME = 60
-HEAD_POS_ANGLE = 15
+BLINK_THRESHOLD = 3
+YAWN_THRESHOLD = 2
+DOZE_THRESHOLD = 2
+TIME_FRAME = 30
+HEAD_POS_ANGLE = 10
 LEFTEYE = [33,159,158,155,153,145]
 RIGHTEYE = [463,385,386,263,374,380]
 UPPERLIP = [72,11,302,82,13,312,61]
 LOWERLIP = [87,14,317,85,16,315,306]
 
-cap = cv.VideoCapture(1)
+cap = cv.VideoCapture(0)
 detector = FaceMeshDetector(maxFaces=1)
 [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
-[yawnCounter,blinkCounter,totalYawnCounter,totalBlinkCounter,ratioList,yawnList,flagEye,flagMouth,eyeCounter,mouthCounter,calibrated_eye,frame,seconds,start_time,stop_time] = [0,0,0,0,[],[],False,False,0,0,EYE_CUTOFF,0,0,0,0]
-# buzzer = Buzzer(17)
+[yawnCounter,blinkCounter,dozeCounter,totalYawnCounter,totalBlinkCounter,totalDozeCounter,ratioList,mouthList,flagEye,flagMouth,flagDown,eyeCounter,mouthCounter,calibrated_eye,frame,seconds,start_time,stop_time] = [0,0,0,0,0,0,[],[],False,False,False,0,0,EYE_CUTOFF,0,0,0,0]
+buzzer = Buzzer(17)
 
 mp_drawing = mp.solutions.drawing_utils
 mp_facemesh = mp.solutions.face_mesh.FaceMesh(min_detection_confidence = 0.5,min_tracking_confidence=0.5)
 
-def processOutput(results,im_h,im_w,angle):
+def processOutput(results,im_h,im_w,x_calibrate,y_calibrate):
+    text = "Not valid"
     [face_3d,face_2d] = [[],[]]
     if(results.multi_face_landmarks):
         for face_landmarks in results.multi_face_landmarks:
             for idx,lm in enumerate(face_landmarks.landmark):
                 if(idx in [33,263,1,61,291,199]):
-                    # if(idx==1):
-                    #     nose_2d = (lm.x*im_w,lm.y*im_h)
-                    #     nose_3d = (lm.x*im_w,lm.y*im_h,lm.z*3000)
                     x,y = int(lm.x*im_w),int(lm.y*im_h)
                     face_2d.append([x,y])
                     face_3d.append([x,y,lm.z])
@@ -57,15 +56,15 @@ def processOutput(results,im_h,im_w,angle):
         angles,_,_,_,_,_ = cv.RQDecomp3x3(rmat)
         x = angles[0]*360
         y = angles[1]*360
-        # z = angles[2]*360
-    
-        if(y<-angle): text = "Looking right"
-        elif(y>angle) : text = "Looking left"
-        elif(x<-angle) : text = "Looking down"
-        elif(x>angle) : text = "Looking up"
-        else : text = "Forward"
-    else: text = "No Face Detected"
-    return True if text=="Forward" else False
+        if (y>y_calibrate-HEAD_POS_ANGLE and y<y_calibrate + HEAD_POS_ANGLE):
+            if(x>x_calibrate-HEAD_POS_ANGLE and x<x_calibrate + HEAD_POS_ANGLE):
+                text = "Valid"
+            elif(x<x_calibrate-HEAD_POS_ANGLE):
+                text = "Down"
+    else:
+        [x,y] = 0,0
+        text = "Not Valid"
+    return (True,x,y,text) if text=="Valid" else (False,x,y,text)
 
 def calcEAR(l):
     a = detector.findDistance(l[1],l[5])
@@ -103,21 +102,29 @@ def calibrate(text):
             ratioList.append(ear)
             if len(ratioList) > AVG_LIST_LENGTH:
                 ratioList.pop(0)
-            ear = sum(ratioList)/len(ratioList)
+            ear = sum(ratioList)//len(ratioList)
             cvzone.putTextRect(img,"Calibrating now... press c to stop calibration",(50,50),scale=2,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
             cvzone.putTextRect(img,text,(50,100),scale=2,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
             cvzone.putTextRect(img,str(int(ear)),(50,150),scale=2,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
-            cv.imshow("Calibrating",img)
 
             if cv.waitKey(10) & 0xFF == ord('c'):
-                print(f"Calibrated normal eye aspect ratio as {int(ear)}")
+                results = mp_facemesh.process(img)
+                im_h,im_w,_ = img.shape
+                _,x,y,_ = processOutput(results,im_h,im_w,0,0)
                 cv.destroyAllWindows()
-                return ear
+                return ear,int(x),int(y)
+        cv.imshow("Calibrating",img)
 
-calibrated_eye_open = calibrate("Open your eyes") if NEED_CALIBRATION else 0
-calibrated_eye_close = calibrate("Close your eyes") if NEED_CALIBRATION else 0
-calibrated_eye = (calibrated_eye_open+calibrated_eye_close)//2 if NEED_CALIBRATION else EYE_CUTOFF
-print(f"Calibrated eye cutoff as {calibrated_eye}")
+def callCalibrate():
+    calibrated_eye_close,x1,y1 = calibrate("Close your eyes")
+    calibrated_eye_open,x2,y2 = calibrate("Open your eyes")
+    [calibrated_x,calibrated_y] = [round(((x1+x2)/2),2),round(((y1+y2)/2),2)]
+    calibrated_eye = (calibrated_eye_open+calibrated_eye_close)//2
+    calibrated_eye_range = (calibrated_eye_open-calibrated_eye_close)//2
+    print(f"Calibrated eye cutoff as {calibrated_eye} and range as {calibrated_eye_range} and angles as {calibrated_x,calibrated_y}")
+    return calibrated_eye_close,calibrated_eye_open,calibrated_x,calibrated_y,calibrated_eye,calibrated_eye_range
+
+[calibrated_eye_close,calibrated_eye_open,calibrated_x,calibrated_y,calibrated_eye,calibrated_eye_range] = callCalibrate() if NEED_CALIBRATION else [0,0,0,0,EYE_CUTOFF,4]
 
 start_time = time.time()
 while cap.isOpened():
@@ -125,9 +132,10 @@ while cap.isOpened():
     suc,img = cap.read()
     results = mp_facemesh.process(img)
     im_h,im_w,_ = img.shape
-    forward = processOutput(results,im_h,im_w,HEAD_POS_ANGLE)
-    
+    forward,_,_,text = processOutput(results,im_h,im_w,calibrated_x,calibrated_y)
+    textDown = text == "Down"
     if(forward):
+        flagDown = False
         img,faces = detector.findFaceMesh(img,draw=False)
         if faces:
             face = faces[0]
@@ -151,7 +159,7 @@ while cap.isOpened():
                     eyeCounter += 1
                     blinkCounter += 1                                       #increment here for actual blink count
                     flagEye = True
-                elif (ear>= calibrated_eye+3 and flagEye) or (eyeCounter>30):
+                elif (ear>= calibrated_eye+calibrated_eye_range and flagEye) or (eyeCounter>60):
                     eyeCounter = 0
                     flagEye = False
                 elif eyeClosed and flagEye:
@@ -171,12 +179,12 @@ while cap.isOpened():
                     flagMouth = False
             else:
                 ratioList.append(ear)
-                yawnList.append(mouth)
+                mouthList.append(mouth)
                 if len(ratioList) > AVG_LIST_LENGTH:
                     ratioList.pop(0)
-                    if len(yawnList) > AVG_LIST_LENGTH*3 : yawnList.pop(0)
+                    if len(mouthList) > AVG_LIST_LENGTH*2 : mouthList.pop(0)
                 ear = sum(ratioList)/len(ratioList)
-                mouth = sum(yawnList)/len(yawnList)
+                mouth = sum(mouthList)/len(mouthList)
 
                 eyeClosed = ear<=calibrated_eye
                 mouthOpen = mouth>=MOUTH_CUTOFF
@@ -195,28 +203,40 @@ while cap.isOpened():
 
             cvzone.putTextRect(img,f"Blinks : {blinkCounter}",(50,50),2,colorT=(0,0,0),colorR=(255,255,255))
             cvzone.putTextRect(img,f"Yawn : {yawnCounter}",(50,100),2,colorT=(0,0,0),colorR=(255,255,255))
-            cvzone.putTextRect(img,f"Time : {round((time.time()-start_time),2)}",(50,150),2,colorT=(0,0,0),colorR=(255,255,255))
+            cvzone.putTextRect(img,f"Dozed off : {dozeCounter}",(50,150),2,colorT=(0,0,0),colorR=(255,255,255))
+            cvzone.putTextRect(img,f"Time : {round((time.time()-start_time),2)}",(50,200),2,colorT=(0,0,0),colorR=(255,255,255))
             cvzone.putTextRect(img,f"Blink for {MIN_FRAME_FOR_BLINK_ALARM} frames under {calibrated_eye}",(350,50),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
             cvzone.putTextRect(img,f"Yawn for {MIN_FRAME_FOR_YAWN_ALARM} frames over {MOUTH_CUTOFF}",(350,75),1,thickness=1,colorR=(0,0,0),colorT=(255,255,255))
 
             if((((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1) and not flagEye and not flagMouth):     #one time frame complete
                 seconds += 1
-                # if(blinkCounter >= BLINK_THRESHOLD or yawnCounter >= YAWN_THRESHOLD):
+                # factors = 0
+                # if(blinkCounter >= BLINK_THRESHOLD): factors += 1
+                # if(yawnCounter >= YAWN_THRESHOLD): factors += 1
+                # if(dozeCounter >= DOZE_THRESHOLD): factors += 2
                 # buzzer.on()
                 # time.sleep(2)
                 # buzzer.off()
-                print(f"Blinked {blinkCounter} times and yawned {yawnCounter} times in batch {seconds}")
+                print(f"Blinked {blinkCounter} times, yawned {yawnCounter} times and dozed off {dozeCounter} times in minute {seconds}")
                 totalBlinkCounter += blinkCounter
                 totalYawnCounter += yawnCounter
-                yawnCounter = 0
-                blinkCounter = 0
+                totalDozeCounter += dozeCounter
+                [blinkCounter,yawnCounter,dozeCounter] = [0,0,0]
+    elif(textDown and not flagDown and flagEye):
+        flagDown = True
+        dozeCounter += 1
 
     cv.imshow("Result",img)
     [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
-    if cv.waitKey(10) & 0xFF == ord('q'):
+    key = cv.waitKey(10)
+    if key & 0xFF == ord('c'):
+        cv.destroyAllWindows()
+        [calibrated_eye_close,calibrated_eye_open,calibrated_x,calibrated_y,calibrated_eye,calibrated_eye_range] = callCalibrate()
+    elif key & 0xFF == ord('q'):
         break
 cv.destroyAllWindows()
 cap.release()
 stop_time = time.time()
 
-print(f"Completed run for {round((stop_time-start_time),2)}")
+total_time = round((stop_time-start_time),2)
+print(f"Completed run for {int(total_time/60)} minutes and {round(total_time%60 , 2)} seconds")
