@@ -29,7 +29,7 @@ detector = FaceMeshDetector(maxFaces=1)
 [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
 [yawnCounter,blinkCounter,dozeCounter,totalYawnCounter,totalBlinkCounter,totalDozeCounter,ratioList,mouthList,flagEye,flagMouth,flagDown,eyeCounter,mouthCounter,calibrated_eye,frame,seconds,start_time,stop_time] = [0,0,0,0,0,0,[],[],False,False,False,0,0,EYE_CUTOFF,0,0,0,0]
 
-def Buzzer(time,dur):
+def buzzer(time,dur):
     GPIO.setmode(GPIO.BOARD)
     GPIO.setup(8,GPIO.OUT)
     for i in range(time):
@@ -219,11 +219,12 @@ while cap.isOpened():
 
             if((((round(time.time() - start_time,2))//TIME_FRAME - seconds) == 1) and not flagEye and not flagMouth):     #one time frame complete
                 seconds += 1
-                # factors = 0
-                # if(blinkCounter >= BLINK_THRESHOLD): factors += 1
-                # if(yawnCounter >= YAWN_THRESHOLD): factors += 1
-                # if(dozeCounter >= DOZE_THRESHOLD): factors += 2
-                # Buzzer(10,3)
+                factors = 0
+                if(blinkCounter >= BLINK_THRESHOLD): factors += 1
+                if(yawnCounter >= YAWN_THRESHOLD): factors += 1
+                if(dozeCounter >= DOZE_THRESHOLD): factors += 2
+                if factors>= 2 : buzzer(10,3)
+                # if blinkCounter>= BLINK_THRESHOLD and yawnCounter<YAWN_THRESHOLD and dozeCounter<DOZE_THRESHOLD : buzzer(3,1)   #small duration alarm if only eye is drowsy
                 print(f"Blinked {blinkCounter} times, yawned {yawnCounter} times and dozed off {dozeCounter} times in minute {seconds}")
                 totalBlinkCounter += blinkCounter
                 totalYawnCounter += yawnCounter
