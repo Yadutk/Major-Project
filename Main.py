@@ -3,7 +3,7 @@ import cvzone
 from cvzone.FaceMeshModule import FaceMeshDetector
 import mediapipe as mp
 import numpy as np
-from gpiozero import Buzzer
+import Rpi.GPIO as GPIO
 import time
 
 EACH_FRAME_DETECTION = False                 #Keep it True for first method and False for averaging the EARs method
@@ -28,7 +28,16 @@ cap = cv.VideoCapture(0)
 detector = FaceMeshDetector(maxFaces=1)
 [LOWERLIPCoord,UPPERLIPCoord,LEFTEYECoord,RIGHTEYECoord] = [[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)],[(0,0),(0,0),(0,0),(0,0),(0,0),(0,0)]]
 [yawnCounter,blinkCounter,dozeCounter,totalYawnCounter,totalBlinkCounter,totalDozeCounter,ratioList,mouthList,flagEye,flagMouth,flagDown,eyeCounter,mouthCounter,calibrated_eye,frame,seconds,start_time,stop_time] = [0,0,0,0,0,0,[],[],False,False,False,0,0,EYE_CUTOFF,0,0,0,0]
-buzzer = Buzzer(17)
+
+def Buzzer(time,dur):
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(8,GPIO.OUT)
+    for i in range(time):
+        GPIO.output(8,True)
+        time.sleep(dur)
+        GPIO.output(8,False)
+        time.sleep(dur)
+    GPIO.cleanup()
 
 mp_drawing = mp.solutions.drawing_utils
 mp_facemesh = mp.solutions.face_mesh.FaceMesh(min_detection_confidence = 0.5,min_tracking_confidence=0.5)
@@ -214,9 +223,7 @@ while cap.isOpened():
                 # if(blinkCounter >= BLINK_THRESHOLD): factors += 1
                 # if(yawnCounter >= YAWN_THRESHOLD): factors += 1
                 # if(dozeCounter >= DOZE_THRESHOLD): factors += 2
-                # buzzer.on()
-                # time.sleep(2)
-                # buzzer.off()
+                # Buzzer(10,3)
                 print(f"Blinked {blinkCounter} times, yawned {yawnCounter} times and dozed off {dozeCounter} times in minute {seconds}")
                 totalBlinkCounter += blinkCounter
                 totalYawnCounter += yawnCounter
