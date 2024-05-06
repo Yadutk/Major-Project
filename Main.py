@@ -5,6 +5,7 @@ import mediapipe as mp
 import numpy as np
 import Rpi.GPIO as GPIO
 import time
+import threading
 
 EACH_FRAME_DETECTION = False                 #Keep it True for first method and False for averaging the EARs method
 NEED_CALIBRATION = True
@@ -38,6 +39,10 @@ def buzzer(time,dur):
         GPIO.output(8,False)
         time.sleep(dur)
     GPIO.cleanup()
+
+def play_buzzer(duration, interval):
+    buzzer_thread = threading.Thread(target=buzzer, args=(duration, interval))
+    buzzer_thread.start()
 
 mp_drawing = mp.solutions.drawing_utils
 mp_facemesh = mp.solutions.face_mesh.FaceMesh(min_detection_confidence = 0.5,min_tracking_confidence=0.5)
@@ -223,8 +228,8 @@ while cap.isOpened():
                 if(blinkCounter >= BLINK_THRESHOLD): factors += 1
                 if(yawnCounter >= YAWN_THRESHOLD): factors += 1
                 if(dozeCounter >= DOZE_THRESHOLD): factors += 2
-                if factors>= 2 : buzzer(10,3)
-                # if blinkCounter>= BLINK_THRESHOLD and yawnCounter<YAWN_THRESHOLD and dozeCounter<DOZE_THRESHOLD : buzzer(3,1)   #small duration alarm if only eye is drowsy
+                if factors>= 2 : play_buzzer(10,3)
+                if blinkCounter>= BLINK_THRESHOLD and yawnCounter<YAWN_THRESHOLD and dozeCounter<DOZE_THRESHOLD : play_buzzer(3,1)   #small duration alarm if only eye is drowsy
                 print(f"Blinked {blinkCounter} times, yawned {yawnCounter} times and dozed off {dozeCounter} times in minute {seconds}")
                 totalBlinkCounter += blinkCounter
                 totalYawnCounter += yawnCounter
